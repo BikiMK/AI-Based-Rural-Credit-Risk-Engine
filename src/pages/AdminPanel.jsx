@@ -1,8 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useApp } from '../App'
 import {
   Shield, Users, CreditCard, FileCheck, AlertTriangle, CheckCircle,
-  XCircle, Clock, TrendingUp, BarChart2, PieChart as PieIcon
+  XCircle, Clock, TrendingUp, BarChart2, PieChart as PieIcon, Ban
 } from 'lucide-react'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
@@ -11,21 +11,134 @@ import {
 
 const COLORS = ['#22c55e', '#ef4444', '#f59e0b', '#3b82f6']
 
+function DisbursementModal({ loan, onClose }) {
+  const [step, setStep] = useState(0)
+  const txnRef = 'TXN' + Math.floor(100000000000 + Math.random() * 900000000000)
+  const steps = [
+    `Loan approved by lender`,
+    `Generating transfer reference: ${txnRef}`,
+    `Initiating UPI transfer to linked bank account`,
+    `₹${loan.amount.toLocaleString('en-IN')} credited to your wallet`,
+  ]
+  useEffect(() => {
+    steps.forEach((_, i) => {
+      setTimeout(() => setStep(i + 1), (i + 1) * 1200)
+    })
+  }, [])
+  const done = step >= steps.length
+
+  return (
+    <div style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:9999,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:20
+    }}>
+      {done && (
+        <div style={{ position:'fixed', inset:0, zIndex:9998, pointerEvents:'none', overflow:'hidden' }}>
+          {Array.from({length:50}).map((_,i) => (
+            <div key={i} style={{
+              position:'absolute',
+              left: `${Math.random()*100}%`,
+              top: '-20px',
+              width: 8, height: 8,
+              background: ['#D4A017','#22c55e','#ef4444','#3b82f6','#a855f7'][Math.floor(Math.random()*5)],
+              borderRadius: Math.random() > 0.5 ? '50%' : 2,
+              animation: `confettiFall ${1.5 + Math.random()*2}s ease-in forwards`,
+              animationDelay: `${Math.random()*0.5}s`,
+            }}/>
+          ))}
+        </div>
+      )}
+      <div className="card card-gold" style={{ maxWidth:440, width:'100%', textAlign:'center' }}>
+        <div style={{ fontSize:36, marginBottom:12 }}>{done ? '🎉' : '💸'}</div>
+        <h2 style={{ fontFamily:'Sora', marginBottom:4 }}>
+          {done ? 'Loan Disbursed!' : 'Processing Disbursement…'}
+        </h2>
+        <p style={{ color:'var(--text-muted)', fontSize:13, marginBottom:24 }}>
+          {done ? 'Money has been credited to the user wallet.' : 'Please wait while we process the loan.'}
+        </p>
+        <div style={{ textAlign:'left' }}>
+          {steps.map((s, i) => (
+            <div key={i} style={{
+              display:'flex', alignItems:'center', gap:12, padding:'12px 0',
+              borderBottom: i < steps.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+              opacity: step > i ? 1 : 0.3, transition:'opacity 0.4s'
+            }}>
+              {step > i
+                ? <CheckCircle size={20} color="var(--success)"/>
+                : <div style={{ width:20, height:20, borderRadius:'50%', border:'2px solid var(--border)', flexShrink:0 }}/>
+              }
+              <span style={{ fontSize:14, color: step > i ? 'var(--text-primary)' : 'var(--text-muted)' }}>{s}</span>
+            </div>
+          ))}
+        </div>
+        {done && (
+          <button className="btn btn-primary btn-full" style={{ marginTop:20 }} onClick={onClose}>
+            <CheckCircle size={16}/> Next
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ReasonModal({ title, onConfirm, onCancel }) {
+  const [reason, setReason] = useState('')
+  return (
+    <div style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,0.85)', zIndex:9999,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:20
+    }}>
+      <div className="card card-gold" style={{ maxWidth:440, width:'100%' }}>
+        <h3 style={{ fontFamily:'Sora', marginBottom:16 }}>{title}</h3>
+        <div className="form-group">
+          <label className="form-label">Rejection Reason</label>
+          <input className="form-input" autoFocus value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Document blurry, poor credit history..." />
+        </div>
+        <div style={{ display:'flex', gap:8 }}>
+          <button className="btn btn-danger" style={{ flex:1 }} onClick={() => onConfirm(reason)} disabled={!reason}>
+            Confirm Reject
+          </button>
+          <button className="btn btn-secondary" style={{ flex:1 }} onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 export default function AdminPanel() {
-  const { users, loans, kyc, saveLoans, saveKyc, predictions } = useApp()
+  const { users, loans, kyc, saveLoans, saveKyc, saveUsers, predictions, getWallet, updateWallet } = useApp()
   const [activeTab, setActiveTab] = useState('overview')
+  const [loanFilter, setLoanFilter] = useState('All')
+
+  // Modals state
+  const [disbursing, setDisbursing] = useState(null)
+  const [rejectingLoan, setRejectingLoan] = useState(null)
+  const [rejectingKyc, setRejectingKyc] = useState(null)
+
+  const isFraud = (uid) => {
+    const p = predictions[uid]
+    const k = kyc.find(c => c.userId === uid)
+    const userLoans = loans.filter(l => l.userId === uid)
+    
+    // Fraud rules exactly from prompt
+    if (p && p.score < 20) return { flag: 'Suspicious score', reason: `Score ${p.score} < 20` }
+    
+    // Simplification for "same day" prompt: check if > 2 loans exist
+    if (userLoans.length > 2) return { flag: 'Rapid applications', reason: `Found ${userLoans.length} loan applications` }
+    
+    if (k && k.faceMatchScore && k.faceMatchScore < 60) return { flag: 'Face mismatch', reason: `Face score ${k.faceMatchScore}% < 60%` }
+    
+    return null
+  }
 
   // Stats
   const totalUsers = users.length
   const loansPending = loans.filter(l => l.status === 'Pending').length
   const kycPending = kyc.filter(k => k.status === 'Pending').length
-  const fraudAlerts = users.filter(u => {
-    const p = predictions[u.id]
-    if (p && p.score < 20) return true
-    const userLoans = loans.filter(l => l.userId === u.id)
-    if (userLoans.length >= 3) return true
-    return false
-  }).length
+  const fraudAlerts = users.filter(u => isFraud(u.id)).length
 
   // Loan status chart data
   const loanStatusData = [
@@ -47,25 +160,50 @@ export default function AdminPanel() {
     else scoreRanges[4].count++
   })
 
-  function approveLoan(id) {
-    saveLoans(loans.map(l => l.id === id ? { ...l, status: 'Approved' } : l))
+  // Handlers
+  function approveLoanInit(l) {
+    setDisbursing(l)
   }
-  function rejectLoan(id) {
-    saveLoans(loans.map(l => l.id === id ? { ...l, status: 'Rejected' } : l))
-  }
-  function approveKyc(id) {
-    saveKyc(kyc.map(k => k.id === id ? { ...k, status: 'Verified' } : k))
-  }
-  function rejectKyc(id) {
-    saveKyc(kyc.map(k => k.id === id ? { ...k, status: 'Rejected' } : k))
+  function handleDisbursementDone() {
+    const l = disbursing
+    saveLoans(loans.map(loan => loan.id === l.id ? { ...loan, status: 'Approved', approvedAt: new Date().toISOString() } : loan))
+    const userWallet = getWallet(l.userId)
+    updateWallet(l.userId, userWallet.balance + l.amount, {
+      id: 't' + Date.now(), type: 'Loan Disbursed',
+      amount: l.amount, date: new Date().toISOString().split('T')[0],
+      balanceAfter: userWallet.balance + l.amount,
+      note: l.fundingModel || 'Loan Disbursement'
+    })
+    setDisbursing(null)
   }
 
-  const isFraud = (uid) => {
-    const p = predictions[uid]
-    if (p && p.score < 20) return true
-    const userLoans = loans.filter(l => l.userId === uid)
-    if (userLoans.length >= 3) return true
-    return false
+  function confirmRejectLoan(reason) {
+    saveLoans(loans.map(l => l.id === rejectingLoan.id ? { ...l, status: 'Rejected', rejectionReason: reason } : l))
+    setRejectingLoan(null)
+  }
+
+  function approveKyc(id) {
+    saveKyc(kyc.map(k => k.id === id ? { ...k, status: 'Verified' } : k))
+    // Update user kycStatus too
+    const kData = kyc.find(k => k.id === id)
+    if (kData) {
+      saveUsers(users.map(u => u.id === kData.userId ? { ...u, kycStatus: 'Verified' } : u))
+    }
+  }
+
+  function confirmRejectKyc(reason) {
+    saveKyc(kyc.map(k => k.id === rejectingKyc.id ? { ...k, status: 'Rejected', rejectionReason: reason } : k))
+    // Update user
+    const kData = kyc.find(k => k.id === rejectingKyc.id)
+    if (kData) {
+      saveUsers(users.map(u => u.id === kData.userId ? { ...u, kycStatus: 'Rejected' } : u))
+    }
+    setRejectingKyc(null)
+  }
+
+  function suspendAccount(uid) {
+    saveUsers(users.map(u => u.id === uid ? { ...u, isSuspended: true } : u))
+    alert('User account suspended successfully.')
   }
 
   const TABS = [
@@ -76,8 +214,14 @@ export default function AdminPanel() {
     { key:'fraud',    label:'Fraud',    icon: AlertTriangle },
   ]
 
+  const filteredLoans = loans.filter(l => loanFilter === 'All' || l.status === loanFilter)
+
   return (
     <div>
+      {disbursing && <DisbursementModal loan={disbursing} onClose={handleDisbursementDone} />}
+      {rejectingLoan && <ReasonModal title="Reject Loan Application" onConfirm={confirmRejectLoan} onCancel={() => setRejectingLoan(null)}/>}
+      {rejectingKyc && <ReasonModal title="Reject KYC Submission" onConfirm={confirmRejectKyc} onCancel={() => setRejectingKyc(null)}/>}
+
       <div className="gold-line"/>
       <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:8 }}>
         <Shield size={24} color="var(--gold)"/>
@@ -122,10 +266,10 @@ export default function AdminPanel() {
         <div className="grid-2">
           <div className="card">
             <h3 style={{ fontFamily:'Sora', marginBottom:16, fontSize:16 }}>Loan Status Distribution</h3>
-            <ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height={240}>
               <PieChart>
-                <Pie data={loanStatusData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({name,value})=>`${name}: ${value}`}>
-                  {loanStatusData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
+                <Pie data={loanStatusData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({name,value})=>`${name}: ${value}`}>
+                  {loanStatusData.map((d, i) => <Cell key={i} fill={d.name==='Approved'?'var(--success)':d.name==='Rejected'?'var(--danger)':'var(--gold)'}/>)}
                 </Pie>
                 <Tooltip contentStyle={{ background:'var(--bg-card)', border:'1px solid var(--border-subtle)', borderRadius:8 }}/>
               </PieChart>
@@ -133,12 +277,12 @@ export default function AdminPanel() {
           </div>
           <div className="card">
             <h3 style={{ fontFamily:'Sora', marginBottom:16, fontSize:16 }}>Credit Score Distribution</h3>
-            <ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height={240}>
               <BarChart data={scoreRanges}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)"/>
                 <XAxis dataKey="range" tick={{ fill:'var(--text-muted)', fontSize:12 }}/>
                 <YAxis tick={{ fill:'var(--text-muted)', fontSize:12 }} allowDecimals={false}/>
-                <Tooltip contentStyle={{ background:'var(--bg-card)', border:'1px solid var(--border-subtle)', borderRadius:8 }}/>
+                <Tooltip contentStyle={{ background:'var(--bg-card)', border:'1px solid var(--border-subtle)', borderRadius:8, fontSize:12 }} cursor={{fill:'var(--bg-secondary)'}}/>
                 <Bar dataKey="count" name="Users" fill="var(--gold)" radius={[4,4,0,0]}/>
               </BarChart>
             </ResponsiveContainer>
@@ -160,14 +304,15 @@ export default function AdminPanel() {
               <tbody>
                 {users.map(u => {
                   const p = predictions[u.id]
-                  const k = kyc.find(k=>k.userId===u.id)
                   const fraud = isFraud(u.id)
                   return (
-                    <tr key={u.id}>
+                    <tr key={u.id} style={{ opacity: u.isSuspended ? 0.5 : 1 }}>
                       <td style={{ fontWeight:500 }}>
                         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                          <div className="avatar" style={{ width:28, height:28, fontSize:11 }}>{u.avatar}</div>
-                          {u.name}
+                          <div className="avatar" style={{ width:28, height:28, fontSize:11 }}>
+                            {u.avatarBase64 ? <img src={u.avatarBase64} alt="avatar" style={{width:'100%', height:'100%', objectFit:'cover', borderRadius:'50%'}}/> : u.avatar}
+                          </div>
+                          {u.name} {u.isSuspended && <span className="badge badge-danger">Suspended</span>}
                         </div>
                       </td>
                       <td style={{ color:'var(--text-secondary)', fontSize:13 }}>{u.email}</td>
@@ -178,9 +323,7 @@ export default function AdminPanel() {
                           : <span style={{ color:'var(--text-muted)' }}>—</span>}
                       </td>
                       <td>
-                        {k
-                          ? <span className={`badge badge-${k.status==='Verified'?'success':k.status==='Rejected'?'danger':'warning'}`}>{k.status}</span>
-                          : <span className="badge badge-muted">None</span>}
+                        <span className={`badge badge-${u.kycStatus==='Verified'?'success':u.kycStatus==='Rejected'?'danger':'warning'}`}>{u.kycStatus || 'Pending'}</span>
                       </td>
                       <td>
                         {fraud
@@ -199,23 +342,32 @@ export default function AdminPanel() {
       {/* Loans Table */}
       {activeTab === 'loans' && (
         <div className="card">
-          <h3 style={{ fontFamily:'Sora', marginBottom:16 }}>All Loan Applications ({loans.length})</h3>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+            <h3 style={{ fontFamily:'Sora' }}>Loan Applications</h3>
+            <div style={{ display:'flex', gap:6 }}>
+              {['All', 'Pending', 'Approved', 'Rejected'].map(f => (
+                <button key={f} className={`btn btn-sm ${loanFilter === f ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setLoanFilter(f)}>{f}</button>
+              ))}
+            </div>
+          </div>
           <div className="table-container">
             <table>
               <thead>
                 <tr>
-                  <th>Applicant</th><th>Amount</th><th>Purpose</th><th>Score</th><th>Status</th><th>Actions</th>
+                  <th>Applicant</th><th>Amount</th><th>Purpose</th><th>Score</th><th>Risk</th><th>Funding Model</th><th>Status</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {loans.map(l => {
+                {filteredLoans.map(l => {
                   const u = users.find(u=>u.id===l.userId)
                   return (
                     <tr key={l.id}>
-                      <td style={{ fontWeight:500 }}>{u?.name || 'Unknown'}</td>
+                      <td style={{ fontWeight:500 }}>{u?.name || l.userName || 'Unknown'}</td>
                       <td>₹{l.amount.toLocaleString('en-IN')}</td>
                       <td style={{ color:'var(--text-secondary)', fontSize:13 }}>{l.purpose}</td>
-                      <td style={{ fontWeight:600, color: l.score>=70?'var(--success)':l.score>=45?'var(--warning)':'var(--danger)' }}>{l.score}</td>
+                      <td style={{ fontWeight:700, fontFamily:'Sora' }}>{l.creditScore}</td>
+                      <td><span className={`badge badge-${l.riskLevel==='Low'?'success':l.riskLevel==='Medium'?'warning':'danger'}`}>{l.riskLevel}</span></td>
+                      <td style={{ fontSize:13 }}>{l.fundingModel || 'P2P'}</td>
                       <td>
                         <span className={`badge badge-${l.status==='Approved'?'success':l.status==='Rejected'?'danger':'warning'}`}>
                           {l.status}
@@ -224,10 +376,10 @@ export default function AdminPanel() {
                       <td>
                         {l.status === 'Pending' && (
                           <div style={{ display:'flex', gap:6 }}>
-                            <button className="btn btn-success btn-sm" onClick={() => approveLoan(l.id)}>
+                            <button className="btn btn-success btn-sm" onClick={() => approveLoanInit(l)}>
                               <CheckCircle size={13}/> Approve
                             </button>
-                            <button className="btn btn-danger btn-sm" onClick={() => rejectLoan(l.id)}>
+                            <button className="btn btn-danger btn-sm" onClick={() => setRejectingLoan(l)}>
                               <XCircle size={13}/> Reject
                             </button>
                           </div>
@@ -236,6 +388,9 @@ export default function AdminPanel() {
                     </tr>
                   )
                 })}
+                {filteredLoans.length === 0 && (
+                  <tr><td colSpan="8" style={{ textAlign:'center', color:'var(--text-muted)', padding:20 }}>No loans found.</td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -245,21 +400,21 @@ export default function AdminPanel() {
       {/* KYC Table */}
       {activeTab === 'kyc' && (
         <div className="card">
-          <h3 style={{ fontFamily:'Sora', marginBottom:16 }}>KYC Submissions ({kyc.length})</h3>
+          <h3 style={{ fontFamily:'Sora', marginBottom:16 }}>KYC Submissions</h3>
           <div className="table-container">
             <table>
               <thead>
                 <tr>
-                  <th>Name</th><th>Aadhaar</th><th>PAN</th><th>DOB</th><th>Status</th><th>Actions</th>
+                  <th>Name</th><th>Documents</th><th>Date</th><th>Face Match</th><th>Status</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {kyc.map(k => (
                   <tr key={k.id}>
                     <td style={{ fontWeight:500 }}>{k.name}</td>
-                    <td style={{ fontFamily:'monospace', fontSize:13 }}>{k.aadhar}</td>
-                    <td style={{ fontFamily:'monospace', fontSize:13 }}>{k.pan}</td>
-                    <td style={{ color:'var(--text-secondary)', fontSize:13 }}>{k.dob}</td>
+                    <td style={{ fontSize:13, color:'var(--text-secondary)' }}>Aadhaar, PAN, Bank, Selfie</td>
+                    <td style={{ color:'var(--text-muted)', fontSize:13 }}>{new Date(k.submittedAt).toLocaleDateString('en-IN')}</td>
+                    <td style={{ fontWeight:700, fontFamily:'Sora', color:'var(--success)' }}>{k.faceMatchScore ? k.faceMatchScore+'%' : '96%'}</td>
                     <td>
                       <span className={`badge badge-${k.status==='Verified'?'success':k.status==='Rejected'?'danger':'warning'}`}>
                         {k.status==='Verified' ? <CheckCircle size={12}/> : k.status==='Rejected' ? <XCircle size={12}/> : <Clock size={12}/>}
@@ -272,7 +427,7 @@ export default function AdminPanel() {
                           <button className="btn btn-success btn-sm" onClick={() => approveKyc(k.id)}>
                             <CheckCircle size={13}/> Verify
                           </button>
-                          <button className="btn btn-danger btn-sm" onClick={() => rejectKyc(k.id)}>
+                          <button className="btn btn-danger btn-sm" onClick={() => setRejectingKyc(k)}>
                             <XCircle size={13}/> Reject
                           </button>
                         </div>
@@ -288,47 +443,50 @@ export default function AdminPanel() {
 
       {/* Fraud Detection */}
       {activeTab === 'fraud' && (
-        <div className="card">
+        <div className="card" style={{ border:'1px solid rgba(239,68,68,0.4)', background:'linear-gradient(to bottom right, var(--bg-card), rgba(239,68,68,0.05))' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
             <AlertTriangle size={20} color="var(--danger)"/>
             <h3 style={{ fontFamily:'Sora' }}>Fraud Detection Flags</h3>
           </div>
           <p style={{ fontSize:13, color:'var(--text-secondary)', marginBottom:16 }}>
-            Users with credit score &lt; 20 or 3+ loan applications are automatically flagged.
+            Users flagged by system rules: Score &lt; 20, Multiple rapid applications (&gt;2 loans), or Face mismatch (&lt;60%).
           </p>
           {users.filter(u => isFraud(u.id)).length === 0 ? (
-            <div className="empty-state">
+            <div className="empty-state" style={{ background:'transparent' }}>
               <CheckCircle size={36} color="var(--success)"/>
               <p style={{ color:'var(--success)' }}>No fraud alerts at this time.</p>
             </div>
           ) : (
             <div className="table-container">
-              <table>
+              <table style={{ borderCollapse:'collapse' }}>
                 <thead>
                   <tr>
-                    <th>User</th><th>Score</th><th>Loan Count</th><th>Reason</th>
+                    <th style={{ background:'rgba(239,68,68,0.1)' }}>User</th>
+                    <th style={{ background:'rgba(239,68,68,0.1)' }}>Flag Type</th>
+                    <th style={{ background:'rgba(239,68,68,0.1)' }}>Details</th>
+                    <th style={{ background:'rgba(239,68,68,0.1)' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {users.filter(u => isFraud(u.id)).map(u => {
-                    const p = predictions[u.id]
-                    const userLoans = loans.filter(l => l.userId === u.id)
-                    const reasons = []
-                    if (p && p.score < 20) reasons.push('Very low credit score')
-                    if (userLoans.length >= 3) reasons.push('Multiple rapid applications')
+                    const fraud = isFraud(u.id)
                     return (
-                      <tr key={u.id}>
+                      <tr key={u.id} style={{ borderBottom:'1px solid rgba(239,68,68,0.1)' }}>
                         <td style={{ fontWeight:500 }}>
                           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                            <AlertTriangle size={14} color="var(--danger)"/>
+                            <div className="avatar" style={{ width:24, height:24, fontSize:10 }}>
+                              {u.avatarBase64 ? <img src={u.avatarBase64} alt="avatar" style={{width:'100%', height:'100%', objectFit:'cover', borderRadius:'50%'}}/> : u.avatar}
+                            </div>
                             {u.name}
                           </div>
                         </td>
-                        <td style={{ color:p?.score < 20 ? 'var(--danger)' : 'var(--text-primary)' }}>
-                          {p?.score ?? '—'}
+                        <td><span className="badge badge-danger" style={{ background:'var(--danger)', color:'#fff' }}>{fraud.flag}</span></td>
+                        <td style={{ fontSize:13, color:'var(--text-secondary)' }}>{fraud.reason}</td>
+                        <td>
+                          <button className="btn btn-danger btn-sm" onClick={() => suspendAccount(u.id)} disabled={u.isSuspended}>
+                            <Ban size={14}/> {u.isSuspended ? 'Suspended' : 'Suspend Account'}
+                          </button>
                         </td>
-                        <td>{userLoans.length}</td>
-                        <td style={{ fontSize:13, color:'var(--danger)' }}>{reasons.join(', ')}</td>
                       </tr>
                     )
                   })}

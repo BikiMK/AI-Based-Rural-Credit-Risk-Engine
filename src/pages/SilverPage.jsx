@@ -16,7 +16,7 @@ export default function SilverPage() {
   const wallet = getWallet(uid)
 
   const [price, setPrice] = useState(BASE_PRICE)
-  const [history, setHistory] = useState(() => Array.from({ length: 10 }, (_, i) => ({
+  const [history, setHistory] = useState(() => Array.from({ length: 20 }, (_, i) => ({
     t: i + 1, price: +(BASE_PRICE + (Math.random() - 0.5) * 2).toFixed(2)
   })))
   const [buyAmt, setBuyAmt] = useState('')
@@ -29,12 +29,16 @@ export default function SilverPage() {
       setPrice(p => {
         const delta = p * 0.005 * (Math.random() > 0.5 ? 1 : -1)
         const newP = +(p + delta).toFixed(2)
-        setHistory(h => [...h.slice(-9), { t: Date.now(), price: newP }])
+        setHistory(h => [...h.slice(-19), { t: Date.now(), price: newP }])
         return newP
       })
     }, 30000)
     return () => clearInterval(interval)
   }, [])
+
+  const currentPriceObj = history[history.length - 1]
+  const prevPriceObj = history.length > 1 ? history[history.length - 2] : currentPriceObj
+  const changePct = prevPriceObj ? +(((currentPriceObj.price - prevPriceObj.price) / prevPriceObj.price) * 100).toFixed(2) : 0
 
   function handleBuy() {
     const amt = +buyAmt
@@ -88,12 +92,11 @@ export default function SilverPage() {
           <div className="ticker-inner" style={{ padding:'0 40px' }}>
             {Array.from({length:4}).map((_,i) => (
               <span key={i} style={{ marginRight:60 }}>
-                🥈 SILVER <span style={{ color:'var(--gold)', fontWeight:700 }}>₹{price}/g</span>
-                &nbsp;|&nbsp; MCX Silver&nbsp;
-                <span style={{ color: pnl >= 0 ? 'var(--success)' : 'var(--danger)' }}>
-                  {pnl >= 0 ? '▲' : '▼'} {Math.abs(pnlPct)}%
+                Silver: <span style={{ color:'var(--gold)', fontWeight:700 }}>₹{price}/g</span>
+                &nbsp;&nbsp;
+                <span style={{ color: changePct >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                  {changePct >= 0 ? '▲' : '▼'} {changePct >= 0 ? '+' : ''}{changePct}%
                 </span>
-                &nbsp;|&nbsp; 24 Carat Pure &nbsp;&nbsp;
               </span>
             ))}
           </div>
@@ -231,7 +234,7 @@ export default function SilverPage() {
 
           {/* Price History */}
           <div className="card">
-            <h3 style={{ fontFamily:'Sora', fontSize:16, marginBottom:16 }}>Price History (Last 10)</h3>
+            <h3 style={{ fontFamily:'Sora', fontSize:16, marginBottom:16 }}>Price History (Last 20)</h3>
             <ResponsiveContainer width="100%" height={160}>
               <LineChart data={history}>
                 <XAxis dataKey="t" hide />

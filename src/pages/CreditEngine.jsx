@@ -4,29 +4,34 @@ import { Gauge, TrendingUp, TrendingDown, Info, CheckCircle, AlertTriangle } fro
 
 // ─── Weighted Scoring Algorithm ────────────────────────────────────────────────
 function calcScore({ income, occupation, landSize, existingLoans, paymentUsage }) {
-  const incomeNorm = Math.min(income / 50000, 1)
-  const payMap = { Low: 0, Medium: 0.5, High: 1 }
-  const payScore = (payMap[paymentUsage] ?? 0) * 20
+  const incomeNorm = Math.min(income / 50000, 1) * 30
+  const paymentScore = { Low: 5, Medium: 13, High: 20 }[paymentUsage]
   const landNorm = Math.min(landSize / 10, 1) * 15
-  const noLoansScore = Math.max(0, 1 - existingLoans / 50000) * 20
-  const occMap = { Farmer: 15, 'Small business': 12, 'Daily wage': 5, Other: 8 }
-  const occBonus = occMap[occupation] ?? 8
-
-  const score = Math.round((incomeNorm * 30) + payScore + landNorm + noLoansScore + occBonus)
-  const clamped = Math.min(100, Math.max(0, score))
-  const risk = clamped >= 70 ? 'Low' : clamped >= 45 ? 'Medium' : 'High'
-  const loanSuggestion = clamped * 1200
+  const loanPenalty = Math.min(existingLoans / 100000, 1) * 20
+  const noLoanBonus = 20 - loanPenalty
+  const occupationBonus = { Farmer: 15, 'Small Business Owner': 13, Salaried: 14, 'Daily Wage Worker': 8, Other: 10 }[occupation] || 10
+  
+  const rawScore = incomeNorm + paymentScore + landNorm + noLoanBonus + occupationBonus
+  const score = Math.min(Math.round(rawScore), 100)
+  const risk = score >= 70 ? 'Low' : score >= 45 ? 'Medium' : 'High'
+  const suggestedLoan = score * 1200
 
   // Top 3 reasons
-  const factors = [
-    { label: 'Monthly Income', score: incomeNorm * 30, max: 30, positive: income >= 20000 },
-    { label: 'Digital Payments', score: payScore, max: 20, positive: paymentUsage !== 'Low' },
-    { label: 'No Existing Loans', score: noLoansScore, max: 20, positive: existingLoans < 5000 },
-    { label: 'Land Ownership', score: landNorm, max: 15, positive: landSize > 0 },
-    { label: 'Occupation Stability', score: occBonus, max: 15, positive: occupation !== 'Daily wage' },
-  ].sort((a, b) => b.score - a.score)
+  let factors = []
+  if (income > 30000) factors.push({ label: `Strong monthly income of ₹${income.toLocaleString('en-IN')} boosted your score by +${Math.round(incomeNorm)} pts`, positive: true, score: incomeNorm, max: 30 })
+  if (paymentUsage === 'High') factors.push({ label: `Excellent digital payment history added +20 pts`, positive: true, score: 20, max: 20 })
+  if (landSize > 2) factors.push({ label: `Land ownership of ${landSize} acres shows asset stability (+${Math.round(landNorm)} pts)`, positive: true, score: landNorm, max: 15 })
+  if (existingLoans > 50000) factors.push({ label: `Existing loans of ₹${existingLoans.toLocaleString('en-IN')} reduced your score by -${Math.round(loanPenalty)} pts`, positive: false, score: noLoanBonus, max: 20 })
+  if (occupation === 'Farmer') factors.push({ label: `Farming occupation recognized as productive (+15 pts)`, positive: true, score: 15, max: 15 })
 
-  return { score: clamped, risk, loanSuggestion, factors: factors.slice(0, 3) }
+  // Fallbacks if not enough reasons
+  if (factors.length < 3 && existingLoans === 0) factors.push({ label: `Zero existing loans contributes positively to your profile (+20 pts)`, positive: true, score: 20, max: 20 })
+  if (factors.length < 3 && paymentUsage === 'Medium') factors.push({ label: `Moderate digital payments added +13 pts`, positive: true, score: 13, max: 20 })
+  if (factors.length < 3 && occupationBonus >= 10) factors.push({ label: `Stable occupation adds +${occupationBonus} pts`, positive: true, score: occupationBonus, max: 15 })
+
+  factors.sort((a, b) => b.score - a.score)
+  
+  return { score, risk, loanSuggestion: suggestedLoan, factors: factors.slice(0, 3) }
 }
 
 // ─── Animated SVG Gauge ────────────────────────────────────────────────────────
@@ -89,7 +94,7 @@ function ScoreGauge({ score, risk }) {
 const INITIAL = { income: '', occupation: 'Farmer', landSize: '', cropType: 'Wheat', existingLoans: '', paymentUsage: 'Medium' }
 
 export default function CreditEngine() {
-  const { session, predictions, savePredictions } = useApp()
+  const { session, predictions, savePredictions, setPage } = useApp()
   const uid = session?.id
   const [form, setForm] = useState(INITIAL)
   const [result, setResult] = useState(predictions[uid] || null)
@@ -108,10 +113,7 @@ export default function CreditEngine() {
         existingLoans: +form.existingLoans || 0,
         paymentUsage: form.paymentUsage
       })
-      const reasons = r.factors.map(f =>
-        f.positive ? `✅ ${f.label}: contributing positively` : `⚠️ ${f.label}: dragging score down`
-      )
-      const final = { ...r, reasons }
+      const final = { ...r }
       setResult(final)
       savePredictions({ ...predictions, [uid]: final })
       setLoading(false)
@@ -137,7 +139,7 @@ export default function CreditEngine() {
             <div className="form-group">
               <label className="form-label">Occupation Type</label>
               <select className="form-select" value={form.occupation} onChange={e => set('occupation', e.target.value)}>
-                <option>Farmer</option><option>Daily wage</option><option>Small business</option><option>Other</option>
+                <option>Farmer</option><option>Daily Wage Worker</option><option>Small Business Owner</option><option>Salaried</option><option>Other</option>
               </select>
             </div>
             {form.occupation === 'Farmer' && (
@@ -225,11 +227,13 @@ export default function CreditEngine() {
                 </div>
               ))}
               <div className="divider"/>
-              <div>
-                {result.reasons.map((r, i) => (
-                  <div key={i} style={{ fontSize:13, color:'var(--text-secondary)', padding:'4px 0' }}>{r}</div>
-                ))}
-              </div>
+              <button 
+                className="btn btn-primary btn-full" 
+                style={{ marginTop: 16 }}
+                onClick={() => setPage('loans')}
+              >
+                Apply for this loan <TrendingUp size={16} style={{ display:'inline', marginLeft:6 }}/>
+              </button>
             </div>
           </div>
         ) : (

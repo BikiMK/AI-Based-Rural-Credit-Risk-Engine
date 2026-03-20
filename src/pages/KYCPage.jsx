@@ -41,10 +41,10 @@ export default function KYCPage() {
       setExtracted({
         name: session.name,
         dob: '1990-06-15',
-        aadhar: '1234 5678 9012',
+        aadhar: 'XXXX-XXXX-4521',
         pan: 'ABCDE1234F',
-        bank: 'SBI •••• 4521',
-        address: 'Village Rampur, Dist. Sitapur, UP'
+        'Bank Account': 'SBI •••• 4521',
+        'IFSC Code': 'SBIN0001234'
       })
       setUploading(false)
       setStep('extracted')
@@ -54,10 +54,9 @@ export default function KYCPage() {
   function handleFaceMatch() {
     setProcessingFace(true)
     setTimeout(() => {
-      const score = Math.floor(92 + Math.random() * 7)
-      setFaceMatch(score)
+      setFaceMatch(96)
       setProcessingFace(false)
-    }, 1800)
+    }, 1500)
   }
 
   function handleSubmit() {
@@ -123,9 +122,16 @@ export default function KYCPage() {
             </>
           )}
           {rec?.status === 'Rejected' && (
-            <button className="btn btn-primary" style={{ marginTop:20, width:'100%' }} onClick={() => { setStep('upload'); setExtracted(null); setFaceMatch(null); setUploadProgress({aadhar:false,pan:false,bank:false,selfie:false}) }}>
-              Resubmit KYC
-            </button>
+            <div style={{ marginTop: 20 }}>
+              {rec.rejectionReason && (
+                <div style={{ padding: 12, background:'rgba(239,68,68,0.1)', border:'1px solid rgba(239,68,68,0.3)', borderRadius:8, fontSize:13, color:'var(--danger)', marginBottom: 12 }}>
+                  <strong>Reason for rejection:</strong> {rec.rejectionReason}
+                </div>
+              )}
+              <button className="btn btn-primary" style={{ width:'100%' }} onClick={() => { setStep('upload'); setExtracted(null); setFaceMatch(null); setUploadProgress({aadhar:false,pan:false,bank:false,selfie:false}) }}>
+                Resubmit KYC
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -256,10 +262,7 @@ export default function KYCPage() {
                 borderRadius:10, textAlign:'center', marginBottom:16
               }}>
                 <div style={{ fontSize:28, fontWeight:800, fontFamily:'Sora', color:'var(--success)' }}>
-                  Match: {faceMatch}%
-                </div>
-                <div style={{ fontSize:13, color:'var(--success)', marginTop:4 }}>
-                  ✅ Identity verified successfully
+                  Face Match Score: 96% — Verified
                 </div>
               </div>
               <button className="btn btn-primary btn-full" onClick={handleSubmit}>

@@ -19,12 +19,34 @@ const ADMIN_ITEMS = [
 ]
 
 export default function Layout({ children }) {
-  const { session, logout, page, setPage, getWallet, sidebarOpen, setSidebarOpen } = useApp()
+  const { session, logout, page, setPage, getWallet, sidebarOpen, setSidebarOpen, users, saveUsers, login } = useApp()
   const [showSettings, setShowSettings] = useState(false)
 
   const wallet = getWallet(session?.id)
   const initials = session?.avatar || session?.name?.split(' ').map(n=>n[0]).join('') || 'U'
+  const avatarImg = session?.avatarBase64 || null
   const navItems = session?.role === 'admin' ? [...NAV_ITEMS, ...ADMIN_ITEMS] : NAV_ITEMS
+
+  const handleAvatarUpload = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const base64 = event.target.result
+      const updatedUser = { ...session, avatarBase64: base64 }
+      // Update global session and redirect back to current page internally via login()
+      saveUsers(users.map(u => u.id === session.id ? updatedUser : u))
+      login(updatedUser)
+      // Restore page because login() routes to dashboard by default
+      setPage(page)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const renderAvatarContent = () => {
+    if (avatarImg) return <img src={avatarImg} alt="avatar" style={{width:'100%', height:'100%', objectFit:'cover', borderRadius:'50%'}}/>
+    return initials
+  }
 
   return (
     <>
@@ -72,7 +94,7 @@ export default function Layout({ children }) {
 
         <div className="sidebar-footer">
           <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
-            <div className="avatar">{initials}</div>
+            <div className="avatar">{renderAvatarContent()}</div>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ fontSize:14, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                 {session?.name}
@@ -110,7 +132,9 @@ export default function Layout({ children }) {
             <Wallet size={14} />
             ₹{wallet.balance.toLocaleString('en-IN')}
           </div>
-          <div className="avatar" onClick={() => setShowSettings(true)} title="Profile">{initials}</div>
+          <div className="avatar" onClick={() => setShowSettings(true)} title="Profile">
+            {renderAvatarContent()}
+          </div>
         </div>
       </header>
 
@@ -134,7 +158,19 @@ export default function Layout({ children }) {
               </button>
             </div>
             <div style={{ textAlign:'center', marginBottom:20 }}>
-              <div className="avatar" style={{ width:64, height:64, fontSize:24, margin:'0 auto 12px' }}>{initials}</div>
+              <label 
+                className="avatar" 
+                style={{ width:64, height:64, fontSize:24, margin:'0 auto 12px', cursor:'pointer', position:'relative', overflow:'hidden' }}
+                title="Click to change profile picture"
+              >
+                {renderAvatarContent()}
+                <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', opacity:0, transition:'opacity 0.2s' }}
+                     onMouseEnter={e => e.currentTarget.style.opacity = 1}
+                     onMouseLeave={e => e.currentTarget.style.opacity = 0}>
+                  <span style={{ fontSize:10, color:'#fff', fontWeight:600 }}>EDIT</span>
+                </div>
+                <input type="file" accept="image/*" style={{ display:'none' }} onChange={handleAvatarUpload} />
+              </label>
               <div style={{ fontSize:18, fontWeight:700, fontFamily:'Sora' }}>{session?.name}</div>
               <div style={{ fontSize:13, color:'var(--text-muted)' }}>{session?.email}</div>
               <span className="badge badge-gold" style={{ marginTop:8 }}>{session?.role}</span>
