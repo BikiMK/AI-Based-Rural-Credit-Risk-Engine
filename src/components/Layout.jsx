@@ -185,6 +185,14 @@ export default function Layout({ children }) {
                 <span>{session?.createdAt ? new Date(session.createdAt).toLocaleDateString('en-IN') : 'N/A'}</span>
               </div>
             </div>
+            {session?.loginSelfie && (
+              <div style={{ background:'var(--bg-secondary)', borderRadius:10, padding:14, marginBottom:16 }}>
+                <div style={{ fontSize:13, color:'var(--text-muted)', marginBottom:12 }}>Login Selfie Record</div>
+                <div style={{ display:'flex', justifyContent:'center' }}>
+                  <img src={session.loginSelfie} alt="Login Selfie" style={{ width: 100, height: 100, borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--gold)' }} />
+                </div>
+              </div>
+            )}
             <div style={{ display:'flex', gap:8 }}>
               <button className="btn btn-danger" style={{ flex:1 }} onClick={() => { logout(); setShowSettings(false) }}>
                 <LogOut size={14}/> Logout

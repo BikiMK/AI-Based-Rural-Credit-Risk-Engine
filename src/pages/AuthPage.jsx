@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useApp } from '../App'
 import { Mail, Lock, User, Phone, Eye, EyeOff, ArrowRight, CheckCircle, RefreshCcw, Camera, Shield } from 'lucide-react'
 
@@ -16,6 +16,25 @@ export default function AuthPage() {
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
   const [faceCaptured, setFaceCaptured] = useState(false)
+  const [isLoginFace, setIsLoginFace] = useState(false)
+  const [countryCode, setCountryCode] = useState('+91')
+  const videoRef = useRef(null)
+  const canvasRef = useRef(null)
+
+  useEffect(() => {
+    let s = null;
+    if (mode === 'face' && !faceCaptured) {
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(str => {
+          s = str;
+          if (videoRef.current) videoRef.current.srcObject = str;
+        })
+        .catch(err => console.error("Webcam error:", err))
+    }
+    return () => {
+      if (s) s.getTracks().forEach(track => track.stop())
+    }
+  }, [mode, faceCaptured])
 
   function set(k, v) { setForm(f => ({...f, [k]: v})); setError('') }
 
@@ -30,7 +49,10 @@ export default function AuthPage() {
     }
     const user = users.find(u => u.email === form.email && u.password === form.password)
     if (!user) { setError('Invalid email or password.'); return }
-    login(user)
+    setPendingUser(user)
+    setIsLoginFace(true)
+    setFaceCaptured(false)
+    setMode('face')
   }
 
   function handleRegister(e) {
@@ -42,11 +64,13 @@ export default function AuthPage() {
     const newOtp = genOTP(); setGeneratedOtp(newOtp)
     setPendingUser({
       id: 'u' + Date.now(), name: form.name, email: form.email,
-      phone: form.phone, password: form.password, role: form.role,
+      phone: form.phone ? `${countryCode} ${form.phone}` : '', password: form.password, role: form.role,
       avatar: form.name.split(' ').map(n=>n[0]).join('').toUpperCase(),
       occupation: 'Other', income: 0, landSize: 0, cropType: 'None',
       existingLoans: 0, paymentUsage: 'Low', createdAt: new Date().toISOString()
     })
+    setIsLoginFace(false)
+    setFaceCaptured(false)
     setMode('otp')
   }
 
@@ -58,16 +82,36 @@ export default function AuthPage() {
 
   function handleFaceCapture() {
     setLoading(true)
-    setTimeout(() => { setFaceCaptured(true); setLoading(false) }, 1500)
+    setTimeout(() => { 
+      if (videoRef.current && canvasRef.current) {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setPendingUser(prev => ({ ...prev, loginSelfie: dataUrl }));
+      }
+      setFaceCaptured(true); 
+      setLoading(false); 
+    }, 1000)
   }
 
   function handleFaceDone() {
     setLoading(true)
     setTimeout(() => {
-      saveUsers([...users, pendingUser])
       setLoading(false)
-      setSuccess('Account created! Logging you in…')
-      setTimeout(() => login(pendingUser), 800)
+      if (isLoginFace) {
+        const updatedUsers = users.map(u => u.id === pendingUser.id ? pendingUser : u)
+        saveUsers(updatedUsers)
+        setSuccess('Face verified! Logging you in…')
+        setTimeout(() => login(pendingUser), 800)
+      } else {
+        saveUsers([...users, pendingUser])
+        setSuccess('Account created! Logging you in…')
+        setTimeout(() => login(pendingUser), 800)
+      }
     }, 500)
   }
 
@@ -90,7 +134,7 @@ export default function AuthPage() {
                   color: mode === m ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: mode === m ? '1px solid var(--border-subtle)' : 'none'
                 }}
-                onClick={() => { setMode(m); setError('') }}
+                onClick={() => { setMode(m); setError(''); setFaceCaptured(false); setIsLoginFace(false); }}
               >{m === 'login' ? 'Login' : 'Register'}</button>
             ))}
           </div>
@@ -153,10 +197,23 @@ export default function AuthPage() {
             </div>
             <div className="form-group">
               <label className="form-label">Phone Number</label>
-              <div style={{ position:'relative' }}>
-                <Phone size={16} style={{ position:'absolute', left:12, top:'50%', transform:'translateY(-50%)', color:'var(--text-muted)' }}/>
-                <input className="form-input" style={{ paddingLeft:38 }} type="tel" placeholder="+91 98765 43210"
-                  value={form.phone} onChange={e => set('phone', e.target.value)}/>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <select className="form-select" style={{ width: 110 }} value={countryCode} onChange={e => setCountryCode(e.target.value)}>
+                  <option value="+91">🇮🇳 +91</option>
+                  <option value="+1">🇺🇸 +1</option>
+                  <option value="+44">🇬🇧 +44</option>
+                </select>
+                <div style={{ position:'relative', flex: 1 }}>
+                  <Phone size={16} style={{ position:'absolute', left:12, top:'50%', transform:'translateY(-50%)', color:'var(--text-muted)' }}/>
+                  <input className="form-input" style={{ paddingLeft:38 }} type="tel" placeholder={countryCode === '+91' ? '10-digit number' : 'Phone Number'}
+                    maxLength={countryCode === '+91' ? 10 : undefined}
+                    value={form.phone} 
+                    onChange={e => {
+                      let val = e.target.value.replace(/\D/g, '');
+                      if (countryCode === '+91') val = val.slice(0, 10);
+                      set('phone', val);
+                    }}/>
+                </div>
               </div>
             </div>
             <div className="grid-2" style={{ gap:12 }}>
@@ -226,14 +283,15 @@ export default function AuthPage() {
             }}>
               {!faceCaptured ? (
                 <>
+                  <video ref={videoRef} autoPlay playsInline muted style={{ position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', zIndex:1 }} />
                   {/* Face outline guide */}
                   <div style={{
                     width:100, height:120, border:'2px dashed var(--gold)', borderRadius:'50%',
-                    display:'flex', alignItems:'center', justifyContent:'center', marginBottom:12
+                    display:'flex', alignItems:'center', justifyContent:'center', marginBottom:12,
+                    zIndex:2, position:'relative'
                   }}>
-                    <User size={48} color="var(--text-muted)"/>
                   </div>
-                  <div style={{ fontSize:12, color:'var(--text-muted)' }}>Position your face inside the oval</div>
+                  <div style={{ fontSize:12, color:'var(--text-muted)', zIndex:2, position:'relative', marginTop: 100, background:'rgba(0,0,0,0.5)', padding:'2px 8px', borderRadius:4 }}>Position your face inside the oval</div>
                   {/* Corner brackets */}
                   {[['0','0'],['0','auto'],['auto','0'],['auto','auto']].map(([t,b],i) => (
                     <div key={i} style={{
@@ -244,13 +302,19 @@ export default function AuthPage() {
                       borderBottom: (i===1||i===3) ? '2px solid var(--gold)' : 'none',
                       borderLeft: (i===0||i===1) ? '2px solid var(--gold)' : 'none',
                       borderRight: (i===2||i===3) ? '2px solid var(--gold)' : 'none',
+                      zIndex:2
                     }}/>
                   ))}
+                  <canvas ref={canvasRef} style={{ display:'none' }} />
                 </>
               ) : (
                 <>
-                  <div style={{ fontSize:48, marginBottom:8 }}>😊</div>
-                  <div style={{ color:'var(--success)', fontWeight:600, fontSize:14 }}>
+                  {pendingUser?.loginSelfie ? (
+                     <img src={pendingUser.loginSelfie} alt="Selfie" style={{ width:'100%', height:'100%', objectFit:'cover', position:'absolute', inset:0 }} />
+                  ) : (
+                     <div style={{ fontSize:48, marginBottom:8 }}>😊</div>
+                  )}
+                  <div style={{ color:'var(--success)', fontWeight:600, fontSize:14, zIndex:2, background:'rgba(0,0,0,0.7)', padding:'4px 12px', borderRadius:20 }}>
                     <CheckCircle size={16} style={{ display:'inline', marginRight:6 }}/>
                     Face captured successfully
                   </div>

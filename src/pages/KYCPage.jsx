@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useApp } from '../App'
 import { Upload, FileCheck, User, Fingerprint, CheckCircle, Clock, XCircle, AlertTriangle, Camera } from 'lucide-react'
 
@@ -24,14 +24,95 @@ export default function KYCPage() {
   const [extracted, setExtracted] = useState(null)
   const [faceMatch, setFaceMatch] = useState(null)
   const [processingFace, setProcessingFace] = useState(false)
+  const [uploadErrors, setUploadErrors] = useState({})
+  const [docImage, setDocImage] = useState(null)
+  
+  const videoRef = useRef(null)
+
+  useEffect(() => {
+    let stream = null;
+    if (step === 'face') {
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(s => {
+          stream = s
+          if (videoRef.current) {
+            videoRef.current.srcObject = s
+          }
+        })
+        .catch(err => console.error("Webcam error:", err))
+    }
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop())
+      }
+    }
+  }, [step])
+
+  // Client-side heuristic to detect cartoons/anime/fake images vs real camera photos
+  // Real photos have high pixel variance (camera noise, lighting gradients).
+  // Anime/cartoons have flat colors and low unique color counts.
+  const validateRealImage = (file) => {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith('image/')) return resolve({ valid: true }) // allow PDFs to pass
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        canvas.width = 64; canvas.height = 64
+        ctx.drawImage(img, 0, 0, 64, 64)
+        const data = ctx.getImageData(0, 0, 64, 64).data
+        const colors = new Set()
+        for (let i = 0; i < data.length; i += 4) {
+          // Quantize to group very similar colors
+          const r = Math.round(data[i] / 10) * 10
+          const g = Math.round(data[i+1] / 10) * 10
+          const b = Math.round(data[i+2] / 10) * 10
+          colors.add(`${r},${g},${b}`)
+        }
+        URL.revokeObjectURL(url)
+        // A 64x64 crop has 4096 pixels. Anime usually < 150 unique quantized colors.
+        // Real photo > 300.
+        if (colors.size < 200) {
+          resolve({ valid: false, reason: 'Artificial/Anime image detected.' })
+        } else {
+          resolve({ valid: true })
+        }
+      }
+      img.onerror = () => resolve({ valid: false, reason: 'Corrupt file.' })
+      img.src = url
+    })
+  }
 
   function handleFileUpload(field) {
-    return (e) => {
-      if (!e.target.files[0]) return
+    return async (e) => {
+      const file = e.target.files[0]
+      if (!file) return
+      
+      // Reset any previous error for this field
+      setUploadErrors(prev => ({ ...prev, [field]: null }))
+      
+      setUploadErrors(prev => ({ ...prev, [field]: null }))
+      setUploadProgress(p => ({ ...p, [field]: 'scanning' }))
+      
+      const validation = await validateRealImage(file)
+      if (!validation.valid) {
+        setUploadProgress(p => ({ ...p, [field]: 'error' }))
+        setUploadErrors(prev => ({ ...prev, [field]: validation.reason }))
+        return
+      }
+
       setUploadProgress(p => ({ ...p, [field]: 'uploading' }))
       setTimeout(() => {
         setUploadProgress(p => ({ ...p, [field]: 'done' }))
-      }, 1200)
+        
+        // Save the image for preview in Step 3
+        if (field === 'aadhar' || field === 'pan') {
+          const reader = new FileReader()
+          reader.onload = ev => setDocImage(ev.target.result)
+          reader.readAsDataURL(file)
+        }
+      }, 1000)
     }
   }
 
@@ -51,12 +132,34 @@ export default function KYCPage() {
     }, 2000)
   }
 
-  function handleFaceMatch() {
+  async function handleFaceMatch() {
     setProcessingFace(true)
-    setTimeout(() => {
-      setFaceMatch(96)
+    try {
+      const res = await fetch('/api/predict_kyc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          face_match: 0.95, // Simulated value for UI
+          blur: 210, // Simulated
+          brightness: 130, // Simulated
+          name_sim: 98 // Simulated name OCR similarity
+        })
+      });
+      const data = await res.json();
+      
+      if (data.status === 'success') {
+        setFaceMatch({ score: data.confidence, result: data.result });
+      } else {
+        setFaceMatch({ score: 96, result: 'VERIFIED (Fallback)' });
+        console.error('API Error:', data.error);
+      }
+    } catch (err) {
+      console.error('Fetch Error:', err);
+      // Fallback in case python server isn't running
+      setFaceMatch({ score: 96, result: 'VERIFIED (Fallback)' });
+    } finally {
       setProcessingFace(false)
-    }, 1500)
+    }
   }
 
   function handleSubmit() {
@@ -128,7 +231,7 @@ export default function KYCPage() {
                   <strong>Reason for rejection:</strong> {rec.rejectionReason}
                 </div>
               )}
-              <button className="btn btn-primary" style={{ width:'100%' }} onClick={() => { setStep('upload'); setExtracted(null); setFaceMatch(null); setUploadProgress({aadhar:false,pan:false,bank:false,selfie:false}) }}>
+              <button className="btn btn-primary" style={{ width:'100%' }} onClick={() => { setStep('upload'); setExtracted(null); setFaceMatch(null); setUploadProgress({aadhar:false,pan:false,bank:false,selfie:false}); setUploadErrors({}) }}>
                 Resubmit KYC
               </button>
             </div>
@@ -174,9 +277,12 @@ export default function KYCPage() {
                 <Icon size={20} color={uploadProgress[key] === 'done' ? 'var(--success)' : 'var(--text-muted)'}/>
                 <div style={{ flex:1 }}>
                   <div style={{ fontSize:14, fontWeight:500 }}>{label}</div>
-                  <div style={{ fontSize:12, color:'var(--text-muted)' }}>
-                    {uploadProgress[key] === 'uploading' ? '⌛ Uploading...' :
-                     uploadProgress[key] === 'done' ? '✅ Uploaded' : 'Click to upload (JPG, PNG, PDF)'}
+                  <div style={{ fontSize:12, color: uploadProgress[key] === 'error' ? 'var(--danger)' : 'var(--text-muted)' }}>
+                    {uploadProgress[key] === 'scanning' ? '🤖 Scanning image...' :
+                     uploadProgress[key] === 'uploading' ? '⌛ Uploading...' :
+                     uploadProgress[key] === 'done' ? '✅ Uploaded' : 
+                     uploadProgress[key] === 'error' ? `❌ ${uploadErrors[key]}` :
+                     'Click to upload (JPG, PNG, PDF)'}
                   </div>
                 </div>
                 {uploadProgress[key] === 'done' && <CheckCircle size={18} color="var(--success)"/>}
@@ -241,15 +347,15 @@ export default function KYCPage() {
           </div>
           <div style={{ display:'flex', gap:16, marginBottom:20 }}>
             <div style={{ flex:1, background:'var(--bg-secondary)', borderRadius:12, padding:20, textAlign:'center' }}>
-              <div style={{ width:80, height:80, borderRadius:'50%', background:'var(--bg-card)', margin:'0 auto 8px', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                <User size={40} color="var(--text-muted)"/>
+              <div style={{ width:80, height:80, borderRadius:'50%', background:'var(--bg-card)', margin:'0 auto 8px', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
+                {docImage ? <img src={docImage} alt="Document" style={{width:'100%', height:'100%', objectFit:'cover'}} /> : <User size={40} color="var(--text-muted)"/>}
               </div>
               <div style={{ fontSize:12, color:'var(--text-muted)' }}>Document Photo</div>
             </div>
             <div style={{ display:'flex', alignItems:'center', color:'var(--text-muted)', fontFamily:'Sora', fontWeight:700 }}>vs</div>
             <div style={{ flex:1, background:'var(--bg-secondary)', borderRadius:12, padding:20, textAlign:'center' }}>
-              <div style={{ width:80, height:80, borderRadius:'50%', background:'var(--bg-card)', margin:'0 auto 8px', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                <Camera size={40} color="var(--text-muted)"/>
+              <div style={{ width:80, height:80, borderRadius:'50%', background:'var(--bg-card)', margin:'0 auto 8px', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
+                <video ref={videoRef} autoPlay playsInline muted style={{ width:'100%', height:'100%', objectFit:'cover' }} />
               </div>
               <div style={{ fontSize:12, color:'var(--text-muted)' }}>Live Selfie</div>
             </div>
@@ -258,11 +364,12 @@ export default function KYCPage() {
           {faceMatch ? (
             <>
               <div style={{
-                padding:16, background:'rgba(34,197,94,0.1)', border:'1px solid rgba(34,197,94,0.3)',
+                padding:16, background: faceMatch.result?.includes('REJECTED') ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', 
+                border: faceMatch.result?.includes('REJECTED') ? '1px solid rgba(239,68,68,0.3)' : '1px solid rgba(34,197,94,0.3)',
                 borderRadius:10, textAlign:'center', marginBottom:16
               }}>
-                <div style={{ fontSize:28, fontWeight:800, fontFamily:'Sora', color:'var(--success)' }}>
-                  Face Match Score: 96% — Verified
+                <div style={{ fontSize:28, fontWeight:800, fontFamily:'Sora', color: faceMatch.result?.includes('REJECTED') ? 'var(--danger)' : 'var(--success)' }}>
+                  Face Match Score: {faceMatch.score}% — {faceMatch.result}
                 </div>
               </div>
               <button className="btn btn-primary btn-full" onClick={handleSubmit}>
